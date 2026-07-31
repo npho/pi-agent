@@ -1,0 +1,32 @@
+# Credentials, secrets, and machine-specific trust
+/auth.json
+/trust.json
+/mcp.json
+/mcp-oauth/
+/mcp-traces/
+/credentials.json
+/secrets.json
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Conversation data and ephemeral runtime state
+/sessions/
+/tmp/
+/pi-crash.log
+*.log
+
+# Installed/runtime-managed assets
+/bin/
+/npm/
+/models-store.json
+/mcp-cache.json
+
+# Local Git metadata backup files
+*.swp
+*~

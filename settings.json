@@ -1,0 +1,26 @@
+{
+  "lastChangelogVersion": "0.83.0",
+  "theme": "system-light/system-dark",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-terra",
+  "defaultThinkingLevel": "medium",
+  "enableInstallTelemetry": false,
+  "compaction": {
+    "enabled": false
+  },
+  "enabledModels": [
+    "openai-codex/gpt-5.6-luna",
+    "openai-codex/gpt-5.6-sol",
+    "openai-codex/gpt-5.6-terra"
+  ],
+  "showHardwareCursor": true,
+  "terminal": {
+    "showTerminalProgress": true
+  },
+  "transport": "sse",
+  "defaultProjectTrust": "ask",
+  "packages": [
+    "npm:pi-mcp-adapter"
+  ],
+  "hideThinkingBlock": false
+}
