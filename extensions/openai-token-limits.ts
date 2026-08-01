@@ -25,6 +25,9 @@ type ModelLike = {
 
 const STATUS_KEY = "openai-token-limits";
 
+// Temporary display toggle: set to true to restore R… and CH… footer stats.
+const SHOW_CACHE_STATS = false;
+
 let latestSnapshot: RateLimitSnapshot | undefined;
 let lastModel: ModelLike | undefined;
 let lastStatus = "extension loaded; no provider response seen yet";
@@ -217,14 +220,37 @@ function formatResetCountdownField(window: RateLimitWindow | undefined, kind: Re
   return (formatResetCountdown(window, kind) ?? "").padStart(width, " ");
 }
 
+// MANUAL APPEARANCE TOGGLE: set this to false if the / end caps look
+// wrong (missing-glyph boxes) in your terminal. They require a Nerd Font.
+// The partial-block meter body remains fully functional either way.
+const USE_NERD_FONT_PILL_CAPS = false;
+
+// Number of terminal cells in the progress body. Each cell has eight partial
+// block states, so this 8-cell meter has 64 visual levels (~1.56% each).
 const METER_WIDTH = 8;
+const PARTIAL_BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
 
 function meter(remainingPercent: number): string {
   const { r, g, b } = rgbForRemainingPercent(remainingPercent);
-  const filled = Math.round((Math.max(0, Math.min(100, remainingPercent)) / 100) * METER_WIDTH);
-  const fill = "█".repeat(filled);
-  const empty = "░".repeat(METER_WIDTH - filled);
-  return `\x1b[38;2;${r};${g};${b}m${fill}\x1b[38;2;100;100;100m${empty}\x1b[0m`;
+  const progress = Math.max(0, Math.min(100, remainingPercent));
+  const eighths = Math.round((progress / 100) * METER_WIDTH * 8);
+  const filled = Math.floor(eighths / 8);
+  const partial = PARTIAL_BLOCKS[eighths % 8] ?? "";
+  const empty = METER_WIDTH - filled - (partial ? 1 : 0);
+  const leftCap = USE_NERD_FONT_PILL_CAPS ? "" : "";
+  const rightCap = USE_NERD_FONT_PILL_CAPS ? "" : "";
+  const used = "100;100;100";
+
+  // Use background-colored cells for the solid regions. Foreground glyphs
+  // (█ and ░) leave terminal-background gaps between the body and curved caps,
+  // which can look like a third, white line. A partial glyph is drawn with the
+  // remaining color over the used-color background, so it is the only mixed cell.
+  const remainingCells = `\x1b[48;2;${r};${g};${b}m${" ".repeat(filled)}`;
+  const partialCell = partial ? `\x1b[38;2;${r};${g};${b}m\x1b[48;2;${used}m${partial}` : "";
+  const usedCells = `\x1b[48;2;${used}m${" ".repeat(empty)}`;
+  const closingCap = rightCap ? `\x1b[49m\x1b[38;2;${used}m${rightCap}` : "";
+
+  return `\x1b[38;2;${r};${g};${b}m${leftCap}${remainingCells}${partialCell}${usedCells}${closingCap}\x1b[0m`;
 }
 
 function badge(label: string, window: RateLimitWindow | undefined): string | undefined {
@@ -360,16 +386,18 @@ function installInlineFooter(ctx: any, getThinkingLevel: () => string) {
         const statsParts: string[] = [];
         if (totalInput) statsParts.push(theme.fg("dim", `↑${formatTokens(totalInput)}`));
         if (totalOutput) statsParts.push(theme.fg("dim", `↓${formatTokens(totalOutput)}`));
-        if (totalCacheRead) statsParts.push(theme.fg("dim", `R${formatTokens(totalCacheRead)}`));
-        if (totalCacheWrite) statsParts.push(theme.fg("dim", `W${formatTokens(totalCacheWrite)}`));
-        if ((totalCacheRead > 0 || totalCacheWrite > 0) && latestCacheHitRate !== undefined) {
-          statsParts.push(theme.fg("dim", `CH${latestCacheHitRate.toFixed(1)}%`));
+        if (SHOW_CACHE_STATS) {
+          if (totalCacheRead) statsParts.push(theme.fg("dim", `R${formatTokens(totalCacheRead)}`));
+          if (totalCacheWrite) statsParts.push(theme.fg("dim", `W${formatTokens(totalCacheWrite)}`));
+          if ((totalCacheRead > 0 || totalCacheWrite > 0) && latestCacheHitRate !== undefined) {
+            statsParts.push(theme.fg("dim", `CH${latestCacheHitRate.toFixed(1)}%`));
+          }
         }
 
         const usingSubscription = model ? ctx.modelRegistry.isUsingOAuth?.(model) : false;
         if (totalCost || usingSubscription) {
           const displayedCost = Math.ceil(totalCost * 100 - Number.EPSILON) / 100;
-          statsParts.push(theme.fg("dim", `$${displayedCost.toFixed(2)}${usingSubscription ? " (sub)" : ""}`));
+          statsParts.push(theme.fg("dim", `$${displayedCost.toFixed(2)}`));
         }
 
         const contextUsage = ctx.getContextUsage?.();
