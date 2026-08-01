@@ -30,3 +30,6 @@
 # Local Git metadata backup files
 *.swp
 *~
+
+# Random
+models.json
