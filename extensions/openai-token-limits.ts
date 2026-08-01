@@ -14,6 +14,24 @@ type RateLimitSnapshot = {
   secondary?: RateLimitWindow;
 };
 
+// Claude Opus 4 pricing per million tokens (fallback for local/free models)
+const OPUS_COSTS = {
+  input: 5,           // $5.00 per 1M input tokens
+  output: 25,         // $25.00 per 1M output tokens
+  cacheRead: 0.5,     // $0.50 per 1M cache read tokens
+  cacheWrite: 6.25,   // $6.25 per 1M cache write tokens
+};
+
+/** Calculate Opus-equivalent cost from token counts */
+function computeOpusCost(input: number, output: number, cacheRead: number, cacheWrite: number): number {
+  return (
+    (input / 1_000_000) * OPUS_COSTS.input +
+    (output / 1_000_000) * OPUS_COSTS.output +
+    (cacheRead / 1_000_000) * OPUS_COSTS.cacheRead +
+    (cacheWrite / 1_000_000) * OPUS_COSTS.cacheWrite
+  );
+}
+
 type ModelLike = {
   api?: string;
   provider?: string;
@@ -394,10 +412,21 @@ function installInlineFooter(ctx: any, getThinkingLevel: () => string) {
           }
         }
 
+        // Always show cost: use actual API cost if available, otherwise
+        // fall back to Opus-equivalent pricing for local/free models.
         const usingSubscription = model ? ctx.modelRegistry.isUsingOAuth?.(model) : false;
-        if (totalCost || usingSubscription) {
+        let costStr = "";
+        if (totalCost > 0) {
+          // Real API cost (Claude, OpenAI, etc.)
           const displayedCost = Math.ceil(totalCost * 100 - Number.EPSILON) / 100;
-          statsParts.push(theme.fg("dim", `$${displayedCost.toFixed(2)}`));
+          costStr = `$${displayedCost.toFixed(2)}`;
+        } else if (totalInput || totalOutput || totalCacheRead || totalCacheWrite) {
+          // Local/free model: show Opus-equivalent cost
+          const opusCost = computeOpusCost(totalInput, totalOutput, totalCacheRead, totalCacheWrite);
+          costStr = `$${opusCost.toFixed(2)}`;
+        }
+        if (costStr || usingSubscription) {
+          statsParts.push(theme.fg("dim", costStr || "$0.00"));
         }
 
         const contextUsage = ctx.getContextUsage?.();

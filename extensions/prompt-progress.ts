@@ -64,6 +64,36 @@ function costToCents(cost: number): number {
   return Math.max(0, Math.ceil(cost * 100 - Number.EPSILON));
 }
 
+// Claude Opus 4 pricing per million tokens (fallback for local/free models)
+const OPUS_COSTS = {
+  input: 5,           // $5.00 per 1M input tokens
+  output: 25,         // $25.00 per 1M output tokens
+  cacheRead: 0.5,     // $0.50 per 1M cache read tokens
+  cacheWrite: 6.25,   // $6.25 per 1M cache write tokens
+};
+
+/** Compute Opus-equivalent cost from token counts */
+function computeOpusCost(input: number, output: number, cacheRead: number, cacheWrite: number): number {
+  return (
+    (input / 1_000_000) * OPUS_COSTS.input +
+    (output / 1_000_000) * OPUS_COSTS.output +
+    (cacheRead / 1_000_000) * OPUS_COSTS.cacheRead +
+    (cacheWrite / 1_000_000) * OPUS_COSTS.cacheWrite
+  );
+}
+
+/**
+ * Resolve the effective cost: if the provider reports $0 (local/free model)
+ * but we have token counts, fall back to Opus-equivalent pricing.
+ */
+function resolveCost(rawCost: number, input: number, output: number, cacheRead: number, cacheWrite: number): number {
+  if (rawCost > 0) return rawCost;
+  if (input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0) {
+    return computeOpusCost(input, output, cacheRead, cacheWrite);
+  }
+  return 0;
+}
+
 export default function (pi: ExtensionAPI) {
   let activeContext: ExtensionContext | undefined;
   let promptStartedAt: number | undefined;
@@ -235,10 +265,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("message_update", (event) => {
     if (event.message.role !== "assistant" || streamingGeneration !== promptGeneration) return;
 
+    const partialUsage = event.assistantMessageEvent.partial.usage;
+    const msgUsage = event.message.usage;
+
     // Read the partial message carried by this exact provider stream event,
     // rather than waiting for a completed assistant message. This renders each
     // output-token value the provider exposes as soon as Pi receives it.
-    const output = event.assistantMessageEvent.partial.usage?.output ?? event.message.usage?.output;
+    const output = partialUsage?.output ?? msgUsage?.output;
     if (typeof output === "number" && Number.isFinite(output)) {
       // The fixed animation timer advances the displayed count toward this
       // target; do not tick per token, which would make it model-dependent.
@@ -246,9 +279,14 @@ export default function (pi: ExtensionAPI) {
       setTokenTarget(completedOutputTokens + streamingOutputTokens);
     }
 
-    const cost = event.assistantMessageEvent.partial.usage?.cost?.total ?? event.message.usage?.cost?.total;
-    if (typeof cost === "number" && Number.isFinite(cost)) {
-      streamingCost = cost;
+    // Resolve cost: use provider-reported cost, but fall back to Opus-equivalent
+    // pricing for local/free models where the provider returns $0.
+    const rawCost = partialUsage?.cost?.total ?? msgUsage?.cost?.total;
+    const input = partialUsage?.input ?? 0;
+    const cacheRead = partialUsage?.cacheRead ?? 0;
+    const cacheWrite = partialUsage?.cacheWrite ?? 0;
+    if (typeof rawCost === "number" && Number.isFinite(rawCost)) {
+      streamingCost = resolveCost(rawCost, input, output, cacheRead, cacheWrite);
       setCostTarget(completedCost + streamingCost);
     }
   });
@@ -256,18 +294,27 @@ export default function (pi: ExtensionAPI) {
   pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant" || streamingGeneration !== promptGeneration) return;
 
+    const msgUsage = event.message.usage;
+
     // A final usage value can arrive before the counter has had a chance to
     // render even one increment. Treat it as another target, not an immediate
     // display value; assigning displayedOutputTokens here was the source of
     // the visible jumps.
-    const output = event.message.usage?.output;
+    const output = msgUsage?.output;
     const finalOutput = typeof output === "number" && Number.isFinite(output) ? output : streamingOutputTokens;
     completedOutputTokens += finalOutput;
     streamingOutputTokens = 0;
     setTokenTarget(completedOutputTokens);
 
-    const cost = event.message.usage?.cost?.total;
-    const finalCost = typeof cost === "number" && Number.isFinite(cost) ? cost : streamingCost;
+    // Resolve cost: use provider-reported cost, but fall back to Opus-equivalent
+    // pricing for local/free models where the provider returns $0.
+    const rawCost = msgUsage?.cost?.total;
+    const input = msgUsage?.input ?? 0;
+    const cacheRead = msgUsage?.cacheRead ?? 0;
+    const cacheWrite = msgUsage?.cacheWrite ?? 0;
+    const finalCost = typeof rawCost === "number" && Number.isFinite(rawCost)
+      ? resolveCost(rawCost, input, output, cacheRead, cacheWrite)
+      : streamingCost;
     completedCost += finalCost;
     streamingCost = 0;
     setCostTarget(completedCost);
