@@ -6,6 +6,8 @@ const GLOW_INTERVAL_MS = 140;
 // Each reported token total is counted through in at most this long. Smaller
 // gaps get a slower, more legible cadence; larger gaps redraw more frequently.
 const MAX_TOKEN_COUNT_DURATION_MS = 10_000;
+// Cost advances in whole cents and catches up more quickly than token output.
+const MAX_COST_COUNT_DURATION_MS = 3_000;
 const GLOW_COLORS = ["dim", "dim", "muted", "muted", "accent", "accent", "accent", "accent", "muted", "muted", "dim", "dim"] as const;
 const WORKING_DOT_FRAMES = [".  ", ".. ", "...", ".. ", ".  ", "   "];
 // One-cell glyphs only: this animates the leading indicator without changing
@@ -44,6 +46,24 @@ function formatTokens(tokens: number): string {
   return Math.max(0, Math.floor(tokens)).toLocaleString("en-US");
 }
 
+function formatWorkedFor(elapsedMs: number, outputTokens: number, costCents: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  const units = [
+    hours > 0 ? `${hours}h` : undefined,
+    minutes > 0 ? `${minutes}m` : undefined,
+    seconds > 0 ? `${seconds}s` : undefined,
+  ].filter((unit): unit is string => unit !== undefined);
+  return `✻ Worked for ${units.join(" ") || "0s"} (${formatTokens(outputTokens)} tokens, $${(costCents / 100).toFixed(2)})`;
+}
+
+function costToCents(cost: number): number {
+  // Match the footer's displayed-cost policy: fractional cents round upward.
+  return Math.max(0, Math.ceil(cost * 100 - Number.EPSILON));
+}
+
 export default function (pi: ExtensionAPI) {
   let activeContext: ExtensionContext | undefined;
   let promptStartedAt: number | undefined;
@@ -53,11 +73,18 @@ export default function (pi: ExtensionAPI) {
   // displayed value so the working row can advance smoothly toward each jump.
   let targetOutputTokens = 0;
   let displayedOutputTokens = 0;
+  // Cost is scoped to the active prompt, including any intermediate assistant
+  // responses/tool-call turns it produces—not the full session total.
+  let completedCost = 0;
+  let streamingCost = 0;
+  let targetCostCents = 0;
+  let displayedCostCents = 0;
   let promptGeneration = 0;
   let streamingGeneration = 0;
   let workingAnimationFrame = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
   let tokenCounterTimer: ReturnType<typeof setInterval> | undefined;
+  let costCounterTimer: ReturnType<typeof setInterval> | undefined;
 
   const advanceTokenCounter = () => {
     if (displayedOutputTokens >= targetOutputTokens) return false;
@@ -93,9 +120,40 @@ export default function (pi: ExtensionAPI) {
     restartTokenCounter();
   };
 
-  const update = (advanceWorkingFrame = true, advanceCounter = false) => {
+  const advanceCostCounter = () => {
+    if (displayedCostCents >= targetCostCents) return false;
+    displayedCostCents += 1;
+    return true;
+  };
+
+  const restartCostCounter = () => {
+    if (costCounterTimer) clearInterval(costCounterTimer);
+    costCounterTimer = undefined;
+
+    const remaining = targetCostCents - displayedCostCents;
+    if (!activeContext || remaining <= 0) return;
+
+    const intervalMs = Math.max(1, Math.floor(MAX_COST_COUNT_DURATION_MS / remaining));
+    costCounterTimer = setInterval(() => {
+      update(false, false, true);
+      if (displayedCostCents >= targetCostCents && costCounterTimer) {
+        clearInterval(costCounterTimer);
+        costCounterTimer = undefined;
+      }
+    }, intervalMs);
+  };
+
+  const setCostTarget = (cost: number) => {
+    const nextTarget = costToCents(cost);
+    if (nextTarget <= targetCostCents) return;
+    targetCostCents = nextTarget;
+    restartCostCounter();
+  };
+
+  const update = (advanceWorkingFrame = true, advanceTokens = false, advanceCost = false) => {
     if (!activeContext || promptStartedAt === undefined) return;
-    if (advanceCounter) advanceTokenCounter();
+    if (advanceTokens) advanceTokenCounter();
+    if (advanceCost) advanceCostCounter();
 
     const elapsed = formatElapsed(Date.now() - promptStartedAt);
     const outputTokens = displayedOutputTokens;
@@ -105,7 +163,7 @@ export default function (pi: ExtensionAPI) {
     const working = glowText(activeContext, "Working", frame);
     const animatedDots = glowText(activeContext, dots, frame);
     activeContext.ui.setWorkingMessage(
-      `${working}${animatedDots} (${elapsed} · ↓ ${formatTokens(outputTokens)} tokens)`,
+      `${working}${animatedDots} (${elapsed} · ↓ ${formatTokens(outputTokens)} tokens · $${(displayedCostCents / 100).toFixed(2)})`,
     );
   };
 
@@ -117,6 +175,10 @@ export default function (pi: ExtensionAPI) {
       streamingOutputTokens = 0;
       targetOutputTokens = 0;
       displayedOutputTokens = 0;
+      completedCost = 0;
+      streamingCost = 0;
+      targetCostCents = 0;
+      displayedCostCents = 0;
       workingAnimationFrame = 0;
       promptGeneration++;
     }
@@ -124,13 +186,16 @@ export default function (pi: ExtensionAPI) {
     update();
     if (!timer) timer = setInterval(() => update(true), GLOW_INTERVAL_MS);
     restartTokenCounter();
+    restartCostCounter();
   };
 
   const stop = (ctx: ExtensionContext) => {
     if (timer) clearInterval(timer);
     if (tokenCounterTimer) clearInterval(tokenCounterTimer);
+    if (costCounterTimer) clearInterval(costCounterTimer);
     timer = undefined;
     tokenCounterTimer = undefined;
+    costCounterTimer = undefined;
     activeContext = undefined;
     promptStartedAt = undefined;
     streamingOutputTokens = 0;
@@ -138,15 +203,21 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setWorkingIndicator();
   };
 
-  pi.on("input", (event) => {
+  pi.on("input", (event, ctx) => {
     if (event.source === "extension") return;
     promptStartedAt = Date.now();
     completedOutputTokens = 0;
     streamingOutputTokens = 0;
     targetOutputTokens = 0;
     displayedOutputTokens = 0;
+    completedCost = 0;
+    streamingCost = 0;
+    targetCostCents = 0;
+    displayedCostCents = 0;
     if (tokenCounterTimer) clearInterval(tokenCounterTimer);
+    if (costCounterTimer) clearInterval(costCounterTimer);
     tokenCounterTimer = undefined;
+    costCounterTimer = undefined;
     workingAnimationFrame = 0;
     promptGeneration++;
     update();
@@ -158,6 +229,7 @@ export default function (pi: ExtensionAPI) {
     if (event.message.role !== "assistant") return;
     streamingGeneration = promptGeneration;
     streamingOutputTokens = 0;
+    streamingCost = 0;
   });
 
   pi.on("message_update", (event) => {
@@ -173,9 +245,15 @@ export default function (pi: ExtensionAPI) {
       streamingOutputTokens = output;
       setTokenTarget(completedOutputTokens + streamingOutputTokens);
     }
+
+    const cost = event.assistantMessageEvent.partial.usage?.cost?.total ?? event.message.usage?.cost?.total;
+    if (typeof cost === "number" && Number.isFinite(cost)) {
+      streamingCost = cost;
+      setCostTarget(completedCost + streamingCost);
+    }
   });
 
-  pi.on("message_end", (event) => {
+  pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant" || streamingGeneration !== promptGeneration) return;
 
     // A final usage value can arrive before the counter has had a chance to
@@ -187,6 +265,39 @@ export default function (pi: ExtensionAPI) {
     completedOutputTokens += finalOutput;
     streamingOutputTokens = 0;
     setTokenTarget(completedOutputTokens);
+
+    const cost = event.message.usage?.cost?.total;
+    const finalCost = typeof cost === "number" && Number.isFinite(cost) ? cost : streamingCost;
+    completedCost += finalCost;
+    streamingCost = 0;
+    setCostTarget(completedCost);
+
+    // Tool-call messages are intermediate work. Add the summary only to the
+    // final response, after any queued user prompt has also completed.
+    if (event.message.content.some((part) => part.type === "toolCall") || ctx.hasPendingMessages()) return;
+    if (event.message.stopReason === "error" || promptStartedAt === undefined) return;
+    if (event.message.content.some(
+      (part) => part.type === "text" && /(?:^|\n)✻ Worked for /.test(part.text),
+    )) return;
+
+    const footer = formatWorkedFor(
+      Date.now() - promptStartedAt,
+      completedOutputTokens,
+      costToCents(completedCost),
+    );
+    const content = [...event.message.content];
+    const lastTextIndex = content.map((part) => part.type).lastIndexOf("text");
+
+    if (lastTextIndex >= 0) {
+      const lastText = content[lastTextIndex];
+      if (lastText?.type === "text") {
+        content[lastTextIndex] = { ...lastText, text: `${lastText.text.trimEnd()}\n\n${footer}` };
+      }
+    } else {
+      content.push({ type: "text", text: footer });
+    }
+
+    return { message: { ...event.message, content } };
   });
 
   pi.on("agent_settled", (_event, ctx) => stop(ctx));
