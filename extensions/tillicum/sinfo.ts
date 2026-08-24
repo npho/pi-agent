@@ -23,19 +23,27 @@ function field(line: string, name: string): string | undefined {
 function parseNodes(output: string): GpuNode[] {
   return output.split("\n").flatMap((line) => {
     const name = field(line, "NodeName");
-    const gres = field(line, "Gres");
     const state = field(line, "State");
-    if (!name || !gres || !state) return [];
+    if (!name || !state) return [];
 
-    // Slurm reports both physical GPUs (gpu:h200:8) and MIG instances
-    // (gpu:h200_1g.18gb:56) as generic GPU GRES resources.
-    const gresMatch = /^gpu:(.+):(\d+)$/.exec(gres) ?? /^gpu:(\d+)$/.exec(gres);
-    if (!gresMatch) return [];
-    const total = Number(gresMatch[2] ?? gresMatch[1]);
-    const gpuType = gresMatch[2] ? gresMatch[1]! : "gpu";
+    // CfgTRES is more stable than Gres, whose display gained topology suffixes
+    // such as gpu:h200:8(S:0-1) in Slurm 25.11.  Slurm reports both physical
+    // GPUs and MIG instances as generic GPU TRES resources.
+    const cfgTRES = field(line, "CfgTRES") ?? "";
+    const typedGpu = /(?:^|,)gres\/gpu:([^=,]+)=(\d+)/.exec(cfgTRES);
+    const genericGpu = /(?:^|,)gres\/gpu=(\d+)/.exec(cfgTRES);
+
+    // Retain a Gres fallback for older Slurm installations that do not expose
+    // GPU entries in CfgTRES.  Ignore an optional topology suffix.
+    const gres = field(line, "Gres") ?? "";
+    const gresGpu = /(?:^|,)gpu:([^:,()]+):(\d+)(?:\([^)]*\))?(?:,|$)/.exec(gres);
+    const gresGenericGpu = /(?:^|,)gpu:(\d+)(?:\([^)]*\))?(?:,|$)/.exec(gres);
+
+    const total = Number(typedGpu?.[2] ?? genericGpu?.[1] ?? gresGpu?.[2] ?? gresGenericGpu?.[1]);
+    const gpuType = typedGpu?.[1] ?? gresGpu?.[1] ?? "gpu";
     if (!Number.isFinite(total) || total < 1) return [];
 
-    const allocTRES = /(?:^|\s)AllocTRES=(.*?)(?=\s(?:CurrentWatts|AveWatts|Reason|$)|$)/.exec(line)?.[1] ?? "";
+    const allocTRES = field(line, "AllocTRES") ?? "";
     const allocated = Number(/(?:^|,)gres\/gpu=(\d+)/.exec(allocTRES)?.[1] ?? 0);
     const reason = /(?:^|\s)Reason=(.*)$/.exec(line)?.[1];
 
@@ -116,8 +124,8 @@ class HealthPanel {
     const lines = [border(`╭${"─".repeat(inner)}╮`)];
 
     lines.push(row(` ${th.fg("accent", th.bold("Slurm GPU health"))}  ${th.fg("dim", `${this.nodes.length} nodes · ${total} GPU resources · updated ${this.refreshedAt.toLocaleTimeString()}`)}`));
-    lines.push(row(` ${th.fg("success", `${allocated} allocated`)} · ${th.fg("success", `${free} free on allocatable nodes`)}${bad ? ` · ${th.fg("error", `${bad} unhealthy`)}` : ""}${this.refreshing ? ` · ${th.fg("dim", "refreshing")}` : ""}`));
-    lines.push(row(` ${th.fg("success", "○ GPU-free  ◐ GPU-partial  ● GPU-full")}  ${th.fg("warning", "R reserved  P planned")}  ${th.fg("error", "× unavailable")}`));
+    lines.push(row(` ${th.fg("accent", `${allocated} allocated`)} · ${th.fg("success", `${free} free on allocatable nodes`)}${bad ? ` · ${th.fg("error", `${bad} unhealthy`)}` : ""}${this.refreshing ? ` · ${th.fg("dim", "refreshing")}` : ""}`));
+    lines.push(row(` ${th.fg("success", "○ GPU-free")}  ${th.fg("warning", "◐ GPU-partial")}  ${th.fg("accent", "● GPU-full")}  ${th.fg("warning", "R reserved  P planned")}  ${th.fg("error", "× unavailable")}`));
     if (this.refreshError) lines.push(row(th.fg("error", ` Refresh error: ${this.refreshError}`)));
     lines.push(row());
 
@@ -144,14 +152,28 @@ class HealthPanel {
   private cardLines(node: GpuNode, width: number): string[] {
     const th = this.theme;
     const state = this.stateSymbol(node);
-    const color = node.unhealthy ? "error" : node.restricted ? "warning" : "success";
+    const stateColor = node.unhealthy
+      ? "error"
+      : node.restricted
+        ? "warning"
+        : node.allocated >= node.total
+          ? "accent"
+          : node.allocated > 0
+            ? "warning"
+            : "success";
     const glyphs = `${"●".repeat(node.allocated)}${"○".repeat(node.total - node.allocated)}`;
     const chunks = glyphs.match(/.{1,8}/g) ?? [""];
     return chunks.map((chunk, index) => {
       const prefix = index === 0
-        ? `${th.fg("accent", node.name)} ${th.fg(color, state)} `
+        ? `${th.fg("accent", node.name)} ${th.fg(stateColor, state)} `
         : "       ";
-      return truncateToWidth(prefix + th.fg(color, chunk), width);
+      const chunkStart = index * 8;
+      const allocatedInChunk = Math.max(0, Math.min(chunk.length, node.allocated - chunkStart));
+      const styledChunk = node.unhealthy || node.restricted
+        ? th.fg(stateColor, chunk)
+        : th.fg("accent", "●".repeat(allocatedInChunk))
+          + th.fg("success", "○".repeat(chunk.length - allocatedInChunk));
+      return truncateToWidth(prefix + styledChunk, width);
     });
   }
 
@@ -165,8 +187,7 @@ class HealthPanel {
     // GPU allocation itself: full, partial, then idle.
     if (node.allocated >= node.total) return "●";
     if (node.allocated > 0) return "◐";
-    if (node.state.includes("IDLE")) return "○";
-    return "?";
+    return "○";
   }
 
   invalidate(): void {}
