@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.84.1",
+  "lastChangelogVersion": "0.84.3",
   "theme": "system-light/system-dark",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
@@ -15,7 +15,9 @@
     "openai-codex/gpt-5.6-terra",
     "openai-codex/gpt-5.6-luna",
     "openai-codex/gpt-5.6-sol",
-    "vllm/Qwen3.6-35B-A3B"
+    "google/deep-research-max-preview-04-2026",
+    "google/gemini-3.6-flash",
+    "google/gemma-4-31b-it"
   ],
   "showHardwareCursor": true,
   "terminal": {
@@ -24,7 +26,8 @@
   "transport": "sse",
   "defaultProjectTrust": "ask",
   "packages": [
-    "npm:pi-mcp-adapter"
+    "npm:pi-mcp-adapter",
+    "ssh://git@github.com/earendil-works/pi-transcribe"
   ],
   "hideThinkingBlock": false
 }
