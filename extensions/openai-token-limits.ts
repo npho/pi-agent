@@ -280,9 +280,7 @@ function badge(label: string, window: RateLimitWindow | undefined): string | und
 }
 
 function renderStatus(snapshot: RateLimitSnapshot): string | undefined {
-  // Temporarily hide the legacy/uncertain 5h window. Keep parsing it for
-  // diagnostics, but display only the right-most (secondary / weekly) limit.
-  return badge("1w", snapshot.secondary);
+  return [badge("5h", snapshot.primary), badge("1w", snapshot.secondary)].filter(Boolean).join(" ") || undefined;
 }
 
 function formatLimitLine(label: string, window: RateLimitWindow | undefined): string {
@@ -513,7 +511,7 @@ export default function openaiTokenLimits(pi: ExtensionAPI) {
       const isCodex = isOpenAICodexModel(model);
       const snapshot = latestSnapshot;
       const plainLines = snapshot
-        ? [formatLimitLine("1w", snapshot.secondary)]
+        ? [formatLimitLine("5h", snapshot.primary), formatLimitLine("1w", snapshot.secondary)]
         : [
             "No OpenAI Codex token-limit data has been captured yet.",
             "Send one Codex request using SSE transport, then run /status again.",
@@ -542,7 +540,7 @@ export default function openaiTokenLimits(pi: ExtensionAPI) {
           render(width: number): string[] {
             const popupWidth = Math.max(20, Math.min(width, 96));
             const innerWidth = popupWidth - 4;
-            // const primaryBarWidth = usageBarWidth("5h"); // 5h window temporarily hidden
+            const primaryBarWidth = usageBarWidth("5h");
             const secondaryBarWidth = usageBarWidth("1w");
             const title = theme.bold(theme.fg(snapshot ? "success" : "warning", "OpenAI Codex token limits"));
             const hint = theme.fg("dim", "Press any key to close");
@@ -556,7 +554,7 @@ export default function openaiTokenLimits(pi: ExtensionAPI) {
             ];
 
             if (snapshot) {
-              // lines.push(boxLine(usageBarLine("5h", snapshot.primary, primaryBarWidth), innerWidth));
+              lines.push(boxLine(usageBarLine("5h", snapshot.primary, primaryBarWidth), innerWidth));
               lines.push(boxLine(usageBarLine("1w", snapshot.secondary, secondaryBarWidth), innerWidth));
               lines.push(boxLine("", innerWidth));
               for (const line of plainLines) lines.push(boxLine(theme.fg("dim", line), innerWidth));
