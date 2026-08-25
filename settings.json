@@ -15,9 +15,8 @@
     "openai-codex/gpt-5.6-terra",
     "openai-codex/gpt-5.6-luna",
     "openai-codex/gpt-5.6-sol",
-    "google/deep-research-max-preview-04-2026",
-    "google/gemini-3.6-flash",
-    "google/gemma-4-31b-it"
+    "vllm/Qwen3.8-27B-FP8",
+    "vllm/gemma-4-31b-it"
   ],
   "showHardwareCursor": true,
   "terminal": {
