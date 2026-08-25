@@ -27,7 +27,9 @@
   "defaultProjectTrust": "ask",
   "packages": [
     "npm:pi-mcp-adapter",
-    "ssh://git@github.com/earendil-works/pi-transcribe"
+    "ssh://git@github.com/earendil-works/pi-transcribe",
+    "npm:pi-subagents",
+    "npm:pi-web-access"
   ],
   "hideThinkingBlock": false
 }
