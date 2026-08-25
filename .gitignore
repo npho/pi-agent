@@ -26,6 +26,8 @@
 /npm/
 /models-store.json
 /mcp-cache.json
+/skills/
+/git/
 
 # Local Git metadata backup files
 *.swp
