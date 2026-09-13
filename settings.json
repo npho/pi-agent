@@ -1,9 +1,51 @@
 {
-  "lastChangelogVersion": "0.84.3",
+  "lastChangelogVersion": "0.85.1",
   "theme": "system-light/system-dark",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
+  "defaultModel": "gpt-5.6-terra",
   "defaultThinkingLevel": "medium",
+  "modelThinkingLevels": {
+    "openai-codex/gpt-5.6-terra": "medium"
+  },
+  "subagents": {
+    "defaultProvider": "openai-codex",
+    "defaultModel": "openai-codex/gpt-5.6-terra",
+    "defaultThinking": "medium",
+    "maxThinking": "medium",
+    "modelScope": {
+      "enforce": true,
+      "strict": true,
+      "allow": [
+        "openai-codex/gpt-5.6-terra"
+      ]
+    },
+    "agentOverrides": {
+      "delegate": {
+        "model": "openai-codex/gpt-5.6-terra",
+        "thinking": "medium"
+      },
+      "oracle": {
+        "model": "openai-codex/gpt-5.6-sol",
+        "thinking": "medium"
+      },
+      "researcher": {
+        "model": "openai-codex/gpt-5.6-luna",
+        "thinking": "medium"
+      },
+      "reviewer": {
+        "model": "openai-codex/gpt-5.6-terra",
+        "thinking": "high"
+      },
+      "scout": {
+        "model": "openai-codex/gpt-5.6-luna",
+        "thinking": "low"
+      },
+      "worker": {
+        "model": "openai-codex/gpt-5.6-terra",
+        "thinking": "medium"
+      }
+    }
+  },
   "enableInstallTelemetry": false,
   "compaction": {
     "enabled": false
@@ -15,8 +57,7 @@
     "openai-codex/gpt-5.6-terra",
     "openai-codex/gpt-5.6-luna",
     "openai-codex/gpt-5.6-sol",
-    "vllm/Qwen3.8-27B-FP8",
-    "vllm/gemma-4-31b-it"
+    "openai-codex/gpt-6-astra"
   ],
   "showHardwareCursor": true,
   "terminal": {
