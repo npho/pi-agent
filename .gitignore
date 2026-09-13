@@ -16,6 +16,7 @@
 *.pfx
 
 # Conversation data and ephemeral runtime state
+/missions/
 /sessions/
 /tmp/
 /pi-crash.log
