@@ -69,8 +69,7 @@
     "npm:pi-mcp-adapter",
     "ssh://git@github.com/earendil-works/pi-transcribe",
     "npm:pi-subagents",
-    "npm:pi-web-access",
-    "npm:pi-markdown-preview"
+    "npm:pi-web-access"
   ],
   "hideThinkingBlock": false
 }
